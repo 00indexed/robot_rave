@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Piper X Dual Arm Setup - Two robots side by side -->
+<mujoco model="piper_dual">
+  <compiler angle="radian" meshdir="piper_ros/src/piper_description/meshes"/>
+
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+
+  <default>
+    <joint damping="50" armature="0.5"/>
+    <geom rgba="0.8 0.82 0.93 1" friction="1 0.005 0.0001"/>
+  </default>
+
+  <asset>
+    <mesh name="base_link" file="base_link.STL"/>
+    <mesh name="link1" file="link1.STL"/>
+    <mesh name="link2" file="link2.STL"/>
+    <mesh name="link3" file="link3.STL"/>
+    <mesh name="link4" file="link4.STL"/>
+    <mesh name="link5" file="link5.STL"/>
+    <mesh name="link6" file="link6.STL"/>
+    <mesh name="gripper_base" file="gripper_base.STL"/>
+    <mesh name="link7" file="link7.STL"/>
+    <mesh name="link8" file="link8.STL"/>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.2 0.2" rgb2="0.3 0.3 0.3" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.2"/>
+  </asset>
+
+  <worldbody>
+    <light directional="true" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2" pos="0 0 5" dir="0 0 -1"/>
+    <light directional="true" diffuse="0.4 0.4 0.4" specular="0.1 0.1 0.1" pos="0 5 3" dir="0 -1 -0.5"/>
+
+    <geom name="floor" type="plane" size="2 2 0.1" material="grid"/>
+
+    <!-- ========== LEFT ARM ========== -->
+    <body name="base_link_L" pos="-0.35 0 0.5">
+      <inertial pos="-0.00474 0.00003 0.0415" mass="1.02"
+                diaginertia="0.00283 0.00267 0.00090"/>
+      <geom type="mesh" mesh="base_link" rgba="0.7 0.75 0.9 1"/>
+
+      <body name="link1_L" pos="0 0 0.123">
+        <inertial pos="0.00012 0.00010 -0.00439" mass="0.71"
+                  diaginertia="0.00049 0.00040 0.00044"/>
+        <joint name="L_joint1" type="hinge" axis="0 0 1"
+               range="-2.618 2.618" damping="80"/>
+        <geom type="mesh" mesh="link1" rgba="0.7 0.75 0.9 1"/>
+
+        <body name="link2_L" pos="0 0 0" euler="1.5708 -0.1359 -3.1416">
+          <inertial pos="0.199 -0.011 0.001" mass="1.17"
+                    diaginertia="0.0679 0.0677 0.00117"/>
+          <joint name="L_joint2" type="hinge" axis="0 0 1"
+                 range="0 3.14" damping="100"/>
+          <geom type="mesh" mesh="link2" rgba="0.7 0.75 0.9 1"/>
+
+          <body name="link3_L" pos="0.28503 0 0" euler="0 0 -1.7939">
+            <inertial pos="-0.020 -0.134 -0.0005" mass="0.5"
+                      diaginertia="0.0138 0.0136 0.00045"/>
+            <joint name="L_joint3" type="hinge" axis="0 0 1"
+                   range="-2.967 0" damping="80"/>
+            <geom type="mesh" mesh="link3" rgba="0.7 0.75 0.9 1"/>
+
+            <body name="link4_L" pos="-0.021984 -0.25075 0" euler="1.5708 0 0">
+              <inertial pos="-0.0001 0.0009 -0.005" mass="0.38"
+                        diaginertia="0.00019 0.00019 0.00015"/>
+              <joint name="L_joint4" type="hinge" axis="0 0 1"
+                     range="-1.745 1.745" damping="40"/>
+              <geom type="mesh" mesh="link4" rgba="0.7 0.75 0.9 1"/>
+
+              <body name="link5_L" pos="0 0 0" euler="-1.5708 0 0">
+                <inertial pos="-0.00004 -0.0566 -0.0037" mass="0.383"
+                          diaginertia="0.00166 0.00164 0.00019"/>
+                <joint name="L_joint5" type="hinge" axis="0 0 1"
+                       range="-1.22 1.22" damping="40"/>
+                <geom type="mesh" mesh="link5" rgba="0.7 0.75 0.9 1"/>
+
+                <body name="link6_L" pos="0.0000883 -0.091 0" euler="1.5708 0 0">
+                  <inertial pos="-0.00009 0.00001 -0.002" mass="0.007"
+                            diaginertia="0.000001 0.000001 0.000001"/>
+                  <joint name="L_joint6" type="hinge" axis="0 0 1"
+                         range="-2.0944 2.0944" damping="30"/>
+                  <geom type="mesh" mesh="link6" rgba="0.8 0.85 0.95 1"/>
+
+                  <body name="gripper_base_L" pos="0 0 0">
+                    <inertial pos="-0.0002 0.00008 0.032" mass="0.45"
+                              diaginertia="0.00093 0.00071 0.00039"/>
+                    <geom type="mesh" mesh="gripper_base" rgba="0.7 0.75 0.9 1"/>
+
+                    <body name="link7_L" pos="0 0 0.1358" euler="1.5708 0 0">
+                      <inertial pos="0.00065 -0.049 0.0097" mass="0.025"
+                                diaginertia="0.000074 0.000075 0.000008"/>
+                      <joint name="L_joint7" type="slide" axis="0 0 1"
+                             range="0 0.035" damping="1"/>
+                      <geom type="mesh" mesh="link7" rgba="0.7 0.75 0.9 1"/>
+                    </body>
+
+                    <body name="link8_L" pos="0 0 0.1358" euler="1.5708 0 -3.1416">
+                      <inertial pos="0.00065 -0.049 0.0097" mass="0.025"
+                                diaginertia="0.000074 0.000075 0.000008"/>
+                      <joint name="L_joint8" type="slide" axis="0 0 -1"
+                             range="-0.035 0" damping="1"/>
+                      <geom type="mesh" mesh="link8" rgba="0.7 0.75 0.9 1"/>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <!-- ========== RIGHT ARM ========== -->
+    <body name="base_link_R" pos="0.35 0 0.5">
+      <inertial pos="-0.00474 0.00003 0.0415" mass="1.02"
+                diaginertia="0.00283 0.00267 0.00090"/>
+      <geom type="mesh" mesh="base_link" rgba="0.9 0.75 0.7 1"/>
+
+      <body name="link1_R" pos="0 0 0.123">
+        <inertial pos="0.00012 0.00010 -0.00439" mass="0.71"
+                  diaginertia="0.00049 0.00040 0.00044"/>
+        <joint name="R_joint1" type="hinge" axis="0 0 1"
+               range="-2.618 2.618" damping="80"/>
+        <geom type="mesh" mesh="link1" rgba="0.9 0.75 0.7 1"/>
+
+        <body name="link2_R" pos="0 0 0" euler="1.5708 -0.1359 -3.1416">
+          <inertial pos="0.199 -0.011 0.001" mass="1.17"
+                    diaginertia="0.0679 0.0677 0.00117"/>
+          <joint name="R_joint2" type="hinge" axis="0 0 1"
+                 range="0 3.14" damping="100"/>
+          <geom type="mesh" mesh="link2" rgba="0.9 0.75 0.7 1"/>
+
+          <body name="link3_R" pos="0.28503 0 0" euler="0 0 -1.7939">
+            <inertial pos="-0.020 -0.134 -0.0005" mass="0.5"
+                      diaginertia="0.0138 0.0136 0.00045"/>
+            <joint name="R_joint3" type="hinge" axis="0 0 1"
+                   range="-2.967 0" damping="80"/>
+            <geom type="mesh" mesh="link3" rgba="0.9 0.75 0.7 1"/>
+
+            <body name="link4_R" pos="-0.021984 -0.25075 0" euler="1.5708 0 0">
+              <inertial pos="-0.0001 0.0009 -0.005" mass="0.38"
+                        diaginertia="0.00019 0.00019 0.00015"/>
+              <joint name="R_joint4" type="hinge" axis="0 0 1"
+                     range="-1.745 1.745" damping="40"/>
+              <geom type="mesh" mesh="link4" rgba="0.9 0.75 0.7 1"/>
+
+              <body name="link5_R" pos="0 0 0" euler="-1.5708 0 0">
+                <inertial pos="-0.00004 -0.0566 -0.0037" mass="0.383"
+                          diaginertia="0.00166 0.00164 0.00019"/>
+                <joint name="R_joint5" type="hinge" axis="0 0 1"
+                       range="-1.22 1.22" damping="40"/>
+                <geom type="mesh" mesh="link5" rgba="0.9 0.75 0.7 1"/>
+
+                <body name="link6_R" pos="0.0000883 -0.091 0" euler="1.5708 0 0">
+                  <inertial pos="-0.00009 0.00001 -0.002" mass="0.007"
+                            diaginertia="0.000001 0.000001 0.000001"/>
+                  <joint name="R_joint6" type="hinge" axis="0 0 1"
+                         range="-2.0944 2.0944" damping="30"/>
+                  <geom type="mesh" mesh="link6" rgba="0.95 0.85 0.8 1"/>
+
+                  <body name="gripper_base_R" pos="0 0 0">
+                    <inertial pos="-0.0002 0.00008 0.032" mass="0.45"
+                              diaginertia="0.00093 0.00071 0.00039"/>
+                    <geom type="mesh" mesh="gripper_base" rgba="0.9 0.75 0.7 1"/>
+
+                    <body name="link7_R" pos="0 0 0.1358" euler="1.5708 0 0">
+                      <inertial pos="0.00065 -0.049 0.0097" mass="0.025"
+                                diaginertia="0.000074 0.000075 0.000008"/>
+                      <joint name="R_joint7" type="slide" axis="0 0 1"
+                             range="0 0.035" damping="1"/>
+                      <geom type="mesh" mesh="link7" rgba="0.9 0.75 0.7 1"/>
+                    </body>
+
+                    <body name="link8_R" pos="0 0 0.1358" euler="1.5708 0 -3.1416">
+                      <inertial pos="0.00065 -0.049 0.0097" mass="0.025"
+                                diaginertia="0.000074 0.000075 0.000008"/>
+                      <joint name="R_joint8" type="slide" axis="0 0 -1"
+                             range="-0.035 0" damping="1"/>
+                      <geom type="mesh" mesh="link8" rgba="0.9 0.75 0.7 1"/>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- LEFT ARM servos -->
+    <position name="L_servo1" joint="L_joint1" kp="200" kv="20"/>
+    <position name="L_servo2" joint="L_joint2" kp="300" kv="30"/>
+    <position name="L_servo3" joint="L_joint3" kp="250" kv="25"/>
+    <position name="L_servo4" joint="L_joint4" kp="150" kv="15"/>
+    <position name="L_servo5" joint="L_joint5" kp="150" kv="15"/>
+    <position name="L_servo6" joint="L_joint6" kp="100" kv="10"/>
+    <position name="L_gripper1" joint="L_joint7" kp="100"/>
+    <position name="L_gripper2" joint="L_joint8" kp="100"/>
+
+    <!-- RIGHT ARM servos -->
+    <position name="R_servo1" joint="R_joint1" kp="200" kv="20"/>
+    <position name="R_servo2" joint="R_joint2" kp="300" kv="30"/>
+    <position name="R_servo3" joint="R_joint3" kp="250" kv="25"/>
+    <position name="R_servo4" joint="R_joint4" kp="150" kv="15"/>
+    <position name="R_servo5" joint="R_joint5" kp="150" kv="15"/>
+    <position name="R_servo6" joint="R_joint6" kp="100" kv="10"/>
+    <position name="R_gripper1" joint="R_joint7" kp="100"/>
+    <position name="R_gripper2" joint="R_joint8" kp="100"/>
+  </actuator>
+</mujoco>
