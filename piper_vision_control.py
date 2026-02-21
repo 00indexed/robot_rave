@@ -45,6 +45,8 @@ LEFT_WRIST_IDX = 15
 RIGHT_SHOULDER_IDX = 12
 RIGHT_ELBOW_IDX = 14
 RIGHT_WRIST_IDX = 16
+LEFT_HIP_IDX = 23
+RIGHT_HIP_IDX = 24
 
 DEFAULT_MODEL_URL = (
     "https://storage.googleapis.com/mediapipe-models/"
@@ -67,10 +69,21 @@ class TrackingConfig:
     shoulder_sign: float
     elbow_sign: float
     swap_shoulder_elbow: bool
+    depth_scale: float
+    base_from_yaw: bool
     center_x: float
     shoulder_offset: float
     elbow_offset: float
     lost_action: str
+
+
+@dataclass
+class MappingDiagnostics:
+    shoulder_yaw: float
+    shoulder_pitch: float
+    elbow_flex: float
+    torso_yaw: float
+    torso_ok: bool
 
 
 def _angle_between(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
@@ -80,6 +93,13 @@ def _angle_between(vec_a: np.ndarray, vec_b: np.ndarray) -> float:
         return 0.0
     cos_angle = float(np.clip(np.dot(vec_a, vec_b) / denom, -1.0, 1.0))
     return float(np.arccos(cos_angle))
+
+
+def _normalize(vec: np.ndarray) -> Optional[np.ndarray]:
+    norm = float(np.linalg.norm(vec))
+    if norm < 1e-6:
+        return None
+    return vec / norm
 
 
 def _landmark_ok(lm, min_visibility: float, ignore_visibility: bool) -> bool:
@@ -123,7 +143,22 @@ def _extract_arm_landmarks(landmarks, side: str, min_visibility: float, ignore_v
     return shoulder, elbow, wrist
 
 
-def _map_landmarks_to_joints(landmarks, cfg: TrackingConfig) -> Optional[np.ndarray]:
+def _landmark_vec(lm, aspect: float, depth_scale: float) -> np.ndarray:
+    return np.array(
+        [
+            float(lm.x),
+            -float(lm.y) * aspect,
+            -float(getattr(lm, "z", 0.0)) * depth_scale,
+        ],
+        dtype=float,
+    )
+
+
+def _map_landmarks_to_joints(
+    landmarks,
+    cfg: TrackingConfig,
+    frame_shape: tuple[int, int, int],
+) -> Optional[tuple[np.ndarray, MappingDiagnostics]]:
     extracted = _extract_arm_landmarks(
         landmarks,
         cfg.side,
@@ -133,12 +168,63 @@ def _map_landmarks_to_joints(landmarks, cfg: TrackingConfig) -> Optional[np.ndar
     if extracted is None:
         return None
 
+    h, w = frame_shape[:2]
+    aspect = h / max(w, 1)
+
     shoulder, elbow, wrist = extracted
 
-    # Convert to a right-handed 2D plane with y up.
-    shoulder_vec = np.array([shoulder.x, -shoulder.y], dtype=float)
-    elbow_vec = np.array([elbow.x, -elbow.y], dtype=float)
-    wrist_vec = np.array([wrist.x, -wrist.y], dtype=float)
+    left_shoulder = landmarks[LEFT_SHOULDER_IDX]
+    right_shoulder = landmarks[RIGHT_SHOULDER_IDX]
+    left_hip = landmarks[LEFT_HIP_IDX]
+    right_hip = landmarks[RIGHT_HIP_IDX]
+
+    torso_ok = (
+        _landmark_ok(left_shoulder, cfg.min_visibility, cfg.ignore_visibility)
+        and _landmark_ok(right_shoulder, cfg.min_visibility, cfg.ignore_visibility)
+    )
+    hips_ok = (
+        _landmark_ok(left_hip, cfg.min_visibility, cfg.ignore_visibility)
+        and _landmark_ok(right_hip, cfg.min_visibility, cfg.ignore_visibility)
+    )
+
+    shoulder_vec = _landmark_vec(shoulder, aspect, cfg.depth_scale)
+    elbow_vec = _landmark_vec(elbow, aspect, cfg.depth_scale)
+    wrist_vec = _landmark_vec(wrist, aspect, cfg.depth_scale)
+
+    if torso_ok:
+        ls_vec = _landmark_vec(left_shoulder, aspect, cfg.depth_scale)
+        rs_vec = _landmark_vec(right_shoulder, aspect, cfg.depth_scale)
+        x_axis = _normalize(rs_vec - ls_vec)
+    else:
+        x_axis = np.array([1.0, 0.0, 0.0], dtype=float)
+
+    if hips_ok and torso_ok:
+        lh_vec = _landmark_vec(left_hip, aspect, cfg.depth_scale)
+        rh_vec = _landmark_vec(right_hip, aspect, cfg.depth_scale)
+        shoulder_mid = (ls_vec + rs_vec) * 0.5
+        hip_mid = (lh_vec + rh_vec) * 0.5
+        y_axis = _normalize(shoulder_mid - hip_mid)
+    else:
+        y_axis = np.array([0.0, 1.0, 0.0], dtype=float)
+
+    if x_axis is None:
+        x_axis = np.array([1.0, 0.0, 0.0], dtype=float)
+        torso_ok = False
+    if y_axis is None:
+        y_axis = np.array([0.0, 1.0, 0.0], dtype=float)
+        torso_ok = False
+
+    z_axis = _normalize(np.cross(x_axis, y_axis))
+    if z_axis is None:
+        z_axis = np.array([0.0, 0.0, 1.0], dtype=float)
+        torso_ok = False
+
+    if float(np.dot(z_axis, np.array([0.0, 0.0, 1.0]))) < 0.0:
+        z_axis = -z_axis
+    x_axis = _normalize(np.cross(y_axis, z_axis))
+    if x_axis is None:
+        x_axis = np.array([1.0, 0.0, 0.0], dtype=float)
+        torso_ok = False
 
     upper = elbow_vec - shoulder_vec
     forearm = wrist_vec - elbow_vec
@@ -146,32 +232,78 @@ def _map_landmarks_to_joints(landmarks, cfg: TrackingConfig) -> Optional[np.ndar
     if np.linalg.norm(upper) < 1e-4 or np.linalg.norm(forearm) < 1e-4:
         return None
 
-    vertical = np.array([0.0, 1.0])
+    upper_b = np.array(
+        [
+            float(np.dot(upper, x_axis)),
+            float(np.dot(upper, y_axis)),
+            float(np.dot(upper, z_axis)),
+        ],
+        dtype=float,
+    )
+    forearm_b = np.array(
+        [
+            float(np.dot(forearm, x_axis)),
+            float(np.dot(forearm, y_axis)),
+            float(np.dot(forearm, z_axis)),
+        ],
+        dtype=float,
+    )
 
-    shoulder_angle = _angle_between(upper, vertical)
-    shoulder_pitch = np.clip(np.pi - shoulder_angle, 0.0, np.pi)
+    shoulder_yaw = float(np.arctan2(upper_b[0], upper_b[2]))
+    cos_y = float(np.cos(-shoulder_yaw))
+    sin_y = float(np.sin(-shoulder_yaw))
+    upper_yawed = np.array(
+        [
+            upper_b[0] * cos_y - upper_b[2] * sin_y,
+            upper_b[1],
+            upper_b[0] * sin_y + upper_b[2] * cos_y,
+        ],
+        dtype=float,
+    )
+    shoulder_pitch = float(np.arctan2(upper_yawed[1], upper_yawed[2]))
 
-    elbow_angle = _angle_between(-upper, forearm)
-    elbow_joint = -np.clip(np.pi - elbow_angle, 0.0, np.pi)
+    elbow_angle = _angle_between(-upper_b, forearm_b)
+    elbow_flex = np.clip(np.pi - elbow_angle, 0.0, np.pi)
 
-    base = (wrist.x - cfg.center_x) * cfg.base_gain
+    # Calculate torso rotation in camera frame
+    # x_axis points from left shoulder to right shoulder
+    # When facing camera: x_axis = (1, 0, 0) → arctan2(1, 0) = π/2
+    # Subtract π/2 to center at 0 when facing camera
+    torso_yaw = float(np.arctan2(x_axis[0], x_axis[2]) - np.pi / 2.0)
 
-    shoulder_value = (shoulder_pitch * cfg.shoulder_gain * cfg.shoulder_sign) + cfg.shoulder_offset
-    elbow_value = (elbow_joint * cfg.elbow_gain * cfg.elbow_sign) + cfg.elbow_offset
+    if cfg.base_from_yaw:
+        # Use torso rotation (pivot) not arm angle
+        # Note: torso_yaw is already in radians, gain should be ~1.0 for direct mapping
+        base = torso_yaw * cfg.base_gain
+    else:
+        base = (wrist.x - cfg.center_x) * cfg.base_gain
+
+    # Apply sign to angle first, then add offset, then scale
+    shoulder_value = ((shoulder_pitch * cfg.shoulder_sign + (np.pi / 2.0)) * cfg.shoulder_gain) + cfg.shoulder_offset
+    elbow_value = ((-elbow_flex) * cfg.elbow_gain * cfg.elbow_sign) + cfg.elbow_offset
 
     if cfg.swap_shoulder_elbow:
         shoulder_value, elbow_value = elbow_value, shoulder_value
 
+    # Clamp joints to hardware limits
+    # Joint limits from piper_control.py JointLimits class
     joints = np.array([
-        base,
-        shoulder_value,
-        elbow_value,
-        0.0,
+        np.clip(base, -2.618, 2.618),           # base: ±150°
+        np.clip(shoulder_value, 0.0, 3.14),     # shoulder: 0° to 180°
+        np.clip(elbow_value, -2.967, 0.0),      # elbow: -170° to 0°
+        0.0,                                     # wrist joints unused
         0.0,
         0.0,
     ])
 
-    return joints
+    diagnostics = MappingDiagnostics(
+        shoulder_yaw=shoulder_yaw,
+        shoulder_pitch=shoulder_pitch,
+        elbow_flex=elbow_flex,
+        torso_yaw=torso_yaw,
+        torso_ok=torso_ok and hips_ok,
+    )
+    return joints, diagnostics
 
 
 def _smooth_joints(prev: Optional[np.ndarray], target: np.ndarray, cfg: TrackingConfig) -> np.ndarray:
@@ -187,14 +319,14 @@ def _smooth_joints(prev: Optional[np.ndarray], target: np.ndarray, cfg: Tracking
     return blended
 
 
-def _draw_status(frame, text: str):
+def _draw_status(frame, text: str, y: int = 24, color: tuple[int, int, int] = (0, 255, 0)):
     cv2.putText(
         frame,
         text,
-        (10, 24),
+        (10, y),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
-        (0, 255, 0),
+        color,
         2,
         cv2.LINE_AA,
     )
@@ -342,28 +474,32 @@ def _parse_args() -> argparse.Namespace:
                         help="Min pose detection confidence.")
     parser.add_argument("--min-tracking", type=float, default=0.5,
                         help="Min pose tracking confidence.")
-    parser.add_argument("--min-visibility", type=float, default=0.5,
+    parser.add_argument("--min-visibility", type=float, default=0.3,
                         help="Min landmark visibility to update targets.")
     parser.add_argument("--ignore-visibility", action="store_true",
                         help="Ignore landmark visibility gating.")
-    parser.add_argument("--smoothing", type=float, default=0.2,
+    parser.add_argument("--smoothing", type=float, default=0.75,
                         help="EMA smoothing factor (0-1).")
-    parser.add_argument("--max-step", type=float, default=0.12,
+    parser.add_argument("--max-step", type=float, default=0.4,
                         help="Max joint delta per frame (radians).")
-    parser.add_argument("--base-gain", type=float, default=3.0,
-                        help="Gain for base rotation from wrist X offset.")
+    parser.add_argument("--base-gain", type=float, default=1.5,
+                        help="Gain for base rotation (yaw or wrist X, depending on --base-from-yaw).")
+    parser.add_argument("--base-from-yaw", action=argparse.BooleanOptionalAction, default=True,
+                        help="Drive base using shoulder yaw (default: enabled).")
     parser.add_argument("--shoulder-gain", type=float, default=1.0,
                         help="Scale shoulder angle response.")
-    parser.add_argument("--elbow-gain", type=float, default=1.0,
+    parser.add_argument("--elbow-gain", type=float, default=1.1,
                         help="Scale elbow angle response.")
-    parser.add_argument("--shoulder-sign", type=float, default=1.0,
+    parser.add_argument("--shoulder-sign", type=float, default=-1.0,
                         help="Flip shoulder direction (use -1 to invert).")
     parser.add_argument("--elbow-sign", type=float, default=1.0,
                         help="Flip elbow direction (use -1 to invert).")
     parser.add_argument("--swap-shoulder-elbow", action="store_true",
                         help="Swap shoulder and elbow mapping.")
+    parser.add_argument("--depth-scale", type=float, default=1.0,
+                        help="Scale relative depth (z) before joint mapping.")
     parser.add_argument("--center-x", type=float, default=0.5,
-                        help="Normalized center X for base rotation.")
+                        help="Normalized center X for base rotation when using wrist X.")
     parser.add_argument("--shoulder-offset", type=float, default=0.0,
                         help="Offset added to shoulder joint (radians).")
     parser.add_argument("--elbow-offset", type=float, default=0.0,
@@ -392,9 +528,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
 
+    # MediaPipe detects left/right anatomically, not based on screen position
+    # So we track the arm the user specified, regardless of mirror
     effective_side = args.side
-    if args.mirror:
-        effective_side = "left" if args.side == "right" else "right"
 
     cfg = TrackingConfig(
         side=effective_side,
@@ -408,6 +544,8 @@ def main() -> None:
         shoulder_sign=args.shoulder_sign,
         elbow_sign=args.elbow_sign,
         swap_shoulder_elbow=args.swap_shoulder_elbow,
+        depth_scale=args.depth_scale,
+        base_from_yaw=args.base_from_yaw,
         center_x=args.center_x,
         shoulder_offset=args.shoulder_offset,
         elbow_offset=args.elbow_offset,
@@ -449,6 +587,11 @@ def main() -> None:
                 "shoulder_vis",
                 "elbow_vis",
                 "wrist_vis",
+                "shoulder_yaw",
+                "shoulder_pitch",
+                "elbow_flex",
+                "torso_yaw",
+                "torso_ok",
                 "target_j1",
                 "target_j2",
                 "target_j3",
@@ -489,8 +632,11 @@ def main() -> None:
                     status = "Pose: tracking" if landmarks else "Pose: not found"
 
                     target = None
+                    diagnostics = None
                     if landmarks:
-                        target = _map_landmarks_to_joints(landmarks, cfg)
+                        mapped = _map_landmarks_to_joints(landmarks, cfg, frame.shape)
+                        if mapped is not None:
+                            target, diagnostics = mapped
 
                     if target is None:
                         if cfg.lost_action == "home":
@@ -504,7 +650,9 @@ def main() -> None:
 
                     if not args.preview_only:
                         arm.move_to_joint_positions(smoothed.tolist())
-                        arm.step()
+                        # Step simulation multiple times for more responsive control
+                        for _ in range(10):
+                            arm.step()
                         if viewer is not None:
                             viewer.sync()
 
@@ -520,6 +668,25 @@ def main() -> None:
                         elif landmarks is not None:
                             _draw_arm_landmarks(frame, landmarks, cfg.side)
                         _draw_status(frame, f"{status} | {args.side} arm | ESC to quit")
+                        if diagnostics is not None:
+                            torso_note = "" if diagnostics.torso_ok else " (torso fallback)"
+                            _draw_status(
+                                frame,
+                                "torso_yaw={:.2f} pitch={:.2f} elbow={:.2f}{}".format(
+                                    diagnostics.torso_yaw,
+                                    diagnostics.shoulder_pitch,
+                                    diagnostics.elbow_flex,
+                                    torso_note,
+                                ),
+                                y=48,
+                                color=(255, 255, 255),
+                            )
+                            _draw_status(
+                                frame,
+                                "targets={}".format(np.round(smoothed[:3], 2)),
+                                y=72,
+                                color=(255, 200, 100),
+                            )
                         try:
                             cv2.imshow("Piper Vision Control", frame)
                             if cv2.waitKey(1) & 0xFF == 27:
@@ -545,17 +712,26 @@ def main() -> None:
                                 _landmark_visibility(landmarks, e_idx),
                                 _landmark_visibility(landmarks, w_idx),
                             )
+                            diag_text = ""
+                            if diagnostics is not None:
+                                diag_text = (
+                                    f" yaw={diagnostics.shoulder_yaw:.2f}"
+                                    f" pitch={diagnostics.shoulder_pitch:.2f}"
+                                    f" elbow={diagnostics.elbow_flex:.2f}"
+                                )
                             print(
                                 f"[frame {frame_idx}] {status} "
                                 f"wrist=({w.x:.2f},{w.y:.2f},{getattr(w, 'z', 0.0):.2f}) "
                                 f"vis=({vis[0]:.2f},{vis[1]:.2f},{vis[2]:.2f}) "
-                                f"joints={smoothed.round(2)}"
+                                f"joints={smoothed.round(2)}{diag_text}"
                             )
 
                     if log_writer and frame_idx % max(args.log_every, 1) == 0:
                         if landmarks is None:
                             wx = wy = wz = float("nan")
                             shoulder_vis = elbow_vis = wrist_vis = float("nan")
+                            shoulder_yaw = shoulder_pitch = elbow_flex = float("nan")
+                            torso_ok = 0
                         else:
                             w_idx = RIGHT_WRIST_IDX if cfg.side == "right" else LEFT_WRIST_IDX
                             s_idx = RIGHT_SHOULDER_IDX if cfg.side == "right" else LEFT_SHOULDER_IDX
@@ -567,6 +743,15 @@ def main() -> None:
                             shoulder_vis = _landmark_visibility(landmarks, s_idx)
                             elbow_vis = _landmark_visibility(landmarks, e_idx)
                             wrist_vis = _landmark_visibility(landmarks, w_idx)
+                            if diagnostics is None:
+                                shoulder_yaw = shoulder_pitch = elbow_flex = torso_yaw = float("nan")
+                                torso_ok = 0
+                            else:
+                                shoulder_yaw = diagnostics.shoulder_yaw
+                                shoulder_pitch = diagnostics.shoulder_pitch
+                                elbow_flex = diagnostics.elbow_flex
+                                torso_yaw = diagnostics.torso_yaw
+                                torso_ok = int(diagnostics.torso_ok)
 
                         actual = arm.get_joint_positions() if not args.preview_only else np.full(6, np.nan)
                         log_writer.writerow(
@@ -580,6 +765,11 @@ def main() -> None:
                                 shoulder_vis,
                                 elbow_vis,
                                 wrist_vis,
+                                shoulder_yaw,
+                                shoulder_pitch,
+                                elbow_flex,
+                                torso_yaw,
+                                torso_ok,
                                 *smoothed.tolist(),
                                 *actual.tolist(),
                             ]
